@@ -3,19 +3,18 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>KLT TOOLs</title>
+  <title>KLT TOOL</title>
   <style>
     body{margin:0;font-family:system-ui,Segoe UI,Roboto,Arial;background:#2b1b10;color:#fff}
     .wrap{max-width:1100px;margin:0 auto;padding:16px}
     .top{display:flex;gap:14px;flex-wrap:wrap;align-items:center;justify-content:space-between}
-    .title{font-weight:800}
+    .title{font-weight:900;font-size:18px}
     .small{opacity:.8;font-size:13px}
     .bar{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
     input{width:70px;padding:8px;border-radius:10px;border:1px solid #ffffff2a;background:#1f120b;color:#fff}
     button{padding:8px 10px;border-radius:10px;border:1px solid #ffffff2a;background:#ffffff12;color:#fff;cursor:pointer}
     button:hover{background:#ffffff1b}
 
-    /* palette */
     .palette{
       margin-top:14px;
       display:flex;gap:10px;flex-wrap:wrap;
@@ -23,13 +22,17 @@
     }
     .thumb{
       width:64px;height:64px;border-radius:12px;
-      border:1px solid #ffffff2a;background:#ffffff10;
-      overflow:hidden;cursor:grab
+      border:2px solid transparent;
+      background:#ffffff10;
+      overflow:hidden;
+      user-select:none;
+      touch-action: manipulation;
     }
-    .thumb:active{cursor:grabbing}
-    .thumb img{width:100%;height:100%;object-fit:cover;pointer-events:none}
+    .thumb.drag{cursor:grab}
+    .thumb.drag:active{cursor:grabbing}
+    .thumb.selected{border-color:#ffd18a}
+    .thumb img{width:100%;height:100%;object-fit:cover;pointer-events:none;display:block}
 
-    /* board */
     .board{
       margin-top:14px;
       padding:16px;border-radius:14px;border:1px solid #ffffff2a;background:#00000022;
@@ -38,21 +41,28 @@
     .cell{
       position:relative;
       border-radius:14px;
-      border:1px solid #ffffff2a;
+      border:1px dashed #ffffff2a;
       background:#ffffff10;
       aspect-ratio: 1 / 1;
       overflow:hidden;
       display:grid;place-items:center;
+      touch-action: manipulation;
     }
     .cell.dragover{outline:2px solid #ffd18a; background:#ffd18a18}
-    .cell img{width:100%;height:100%;object-fit:cover}
+    .cell img{width:100%;height:100%;object-fit:cover;display:block}
     .idx{
       position:absolute;top:8px;left:8px;
       padding:4px 8px;border-radius:999px;
       background:#00000066;border:1px solid #ffffff2a;
       font-size:12px
     }
-    .hint{opacity:.7;font-size:12px;margin-top:8px}
+    .plus{opacity:.55;font-weight:900;font-size:22px}
+
+    .hint{opacity:.8;font-size:12px;margin-top:8px;line-height:1.4}
+    .mode{
+      padding:6px 10px;border-radius:999px;border:1px solid #ffffff2a;background:#00000033;
+      font-size:12px;opacity:.9
+    }
   </style>
 </head>
 <body>
@@ -60,10 +70,11 @@
     <div class="top">
       <div>
         <div class="title">KLT TOOL</div>
-        <div class="small">PHẦN MỀM HỖ TRỢ - BY DEV BÉ LẬP </div>
+        <div class="small" id="helpText"></div>
       </div>
 
       <div class="bar">
+        <span class="mode" id="modeBadge"></span>
         <div>
           <div class="small">Hàng</div>
           <input id="rows" type="number" min="1" max="10" value="2" />
@@ -74,18 +85,21 @@
         </div>
         <button id="build">Tạo ô</button>
         <button id="clear">Xoá hết</button>
+        <button id="unselect">Bỏ chọn ảnh</button>
       </div>
     </div>
 
     <div class="palette" id="palette"></div>
-
     <div class="board" id="board"></div>
-    <div class="hint">Tip: Thêm ảnh của bạn vào thư mục <b>assets/</b> rồi sửa mảng <b>IMAGES</b> trong code.</div>
+
+    <div class="hint">
+      Nếu ảnh không hiện: kiểm tra lại đường dẫn trong mảng <b>IMAGES</b> có đúng tên file + đúng thư mục không.
+    </div>
   </div>
 
 <script>
 (() => {
-  // 1) ĐỔI DANH SÁCH ẢNH Ở ĐÂY (ảnh nằm trong /assets/)
+  // Nếu ảnh của bạn nằm trong folder assets/ -> giữ như này
   const IMAGES = [
     "assets/01.png",
     "assets/02.png",
@@ -94,23 +108,33 @@
     "assets/05.png",
     "assets/06.png",
     "assets/07.png",
-    
-    // thêm nữa cũng được...
   ];
 
-  const LS_KEY = "memory-helper-simple-v1";
+  // Nếu ảnh bạn để ở root repo (cùng cấp index.html) thì đổi thành:
+  // const IMAGES = ["01.png","02.png","03.png","04.png","05.png","06.png","07.png"];
+
+  const LS_KEY = "memory-helper-simple-v2";
 
   const els = {
     rows: document.getElementById("rows"),
     cols: document.getElementById("cols"),
     build: document.getElementById("build"),
     clear: document.getElementById("clear"),
+    unselect: document.getElementById("unselect"),
     palette: document.getElementById("palette"),
     board: document.getElementById("board"),
+    modeBadge: document.getElementById("modeBadge"),
+    helpText: document.getElementById("helpText"),
   };
 
   let rows = 2, cols = 4, N = 8;
   let state = []; // state[i] = imageUrl or null
+  let selectedImg = null;
+
+  // detect mobile-ish: no hover + coarse pointer
+  const isTouch = window.matchMedia && (
+    window.matchMedia("(pointer: coarse)").matches || window.matchMedia("(hover: none)").matches
+  );
 
   function save(){
     localStorage.setItem(LS_KEY, JSON.stringify({rows, cols, state}));
@@ -131,14 +155,36 @@
     }catch(e){ return false; }
   }
 
+  function setModeUI(){
+    if(isTouch){
+      els.modeBadge.textContent = "Mobile: chạm để đặt";
+      els.helpText.textContent = "Chạm 1 ảnh để chọn → chạm ô để đặt. Chạm ô lần nữa để xoá.";
+    }else{
+      els.modeBadge.textContent = "PC: kéo thả";
+      els.helpText.textContent = "Kéo ảnh từ kho xuống ô. Click ô để xoá.";
+    }
+  }
+
   function renderPalette(){
     els.palette.innerHTML = "";
     IMAGES.forEach(url => {
       const d = document.createElement("div");
-      d.className = "thumb";
-      d.draggable = true;
-      d.addEventListener("dragstart", (e) => {
-        e.dataTransfer.setData("text/img", url);
+      d.className = "thumb" + (isTouch ? "" : " drag");
+      if(selectedImg === url) d.classList.add("selected");
+
+      // PC: drag & drop
+      if(!isTouch){
+        d.draggable = true;
+        d.addEventListener("dragstart", (e) => {
+          e.dataTransfer.setData("text/img", url);
+        });
+      }
+
+      // Mobile: tap to select
+      d.addEventListener("click", () => {
+        if(!isTouch) return;
+        selectedImg = (selectedImg === url) ? null : url;
+        renderPalette();
       });
 
       const img = document.createElement("img");
@@ -184,16 +230,16 @@
         cell.appendChild(img);
       }else{
         const plus = document.createElement("div");
-        plus.style.opacity = ".55";
-        plus.style.fontWeight = "900";
-        plus.style.fontSize = "22px";
+        plus.className = "plus";
         plus.textContent = "+";
         cell.appendChild(plus);
       }
 
-      cell.addEventListener("dragover", (e) => { e.preventDefault(); cell.classList.add("dragover"); });
+      // PC drag-drop
+      cell.addEventListener("dragover", (e) => { if(isTouch) return; e.preventDefault(); cell.classList.add("dragover"); });
       cell.addEventListener("dragleave", () => cell.classList.remove("dragover"));
       cell.addEventListener("drop", (e) => {
+        if(isTouch) return;
         e.preventDefault();
         cell.classList.remove("dragover");
         const imgUrl = e.dataTransfer.getData("text/img");
@@ -203,15 +249,29 @@
         save();
       });
 
-      // click to clear
+      // Mobile tap-to-place
       cell.addEventListener("click", () => {
+        if(isTouch){
+          if(state[i]) {
+            state[i] = null; // tap again to clear
+          } else {
+            if(!selectedImg) return; // chưa chọn ảnh thì thôi
+            state[i] = selectedImg;
+          }
+          renderBoard();
+          save();
+          return;
+        }
+
+        // PC: click to clear
         state[i] = null;
         renderBoard();
         save();
       });
 
-      // right click to clear (desktop)
+      // right click clear (PC)
       cell.addEventListener("contextmenu", (e) => {
+        if(isTouch) return;
         e.preventDefault();
         state[i] = null;
         renderBoard();
@@ -230,18 +290,20 @@
 
   els.build.addEventListener("click", buildBoard);
   els.clear.addEventListener("click", clearAll);
+  els.unselect.addEventListener("click", () => { selectedImg = null; renderPalette(); });
 
   // init
-  const ok = load();
-  if(!ok){
+  load();
+  if(!state.length){
     rows = 2; cols = 4; N = 8;
     state = Array(N).fill(null);
     els.rows.value = rows; els.cols.value = cols;
   }
+
+  setModeUI();
   renderPalette();
   renderBoard();
 })();
 </script>
 </body>
 </html>
-
